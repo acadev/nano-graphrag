@@ -3,7 +3,11 @@ import numpy as np
 from typing import Optional, List, Any, Callable
 from unittest.mock import Mock
 
-import aioboto3
+try:
+    import aioboto3
+except ImportError:
+    aioboto3 = None  # type: ignore[assignment]  # optional; only needed for Amazon Bedrock
+
 from openai import AsyncOpenAI, AsyncAzureOpenAI, APIConnectionError, RateLimitError
 
 from tenacity import (
