@@ -1,0 +1,75 @@
+# distllm (https://github.com/ramanathanlab/distllm) embed config for the
+# radiation-biology pilot corpus on Aurora (ALCF).
+#
+# Pipeline: pdfwf JSONL ({"path": ..., "text": ..., "metadata": {...}}) ->
+#           SFR-Embedding-Mistral semantic chunking -> HF Arrow shards
+#           consumed by nano_graphrag._distllm_bridge.
+#
+# Run with:
+#   distllm embed --config configs/aurora_sfr_mistral_radiation_biology.yaml
+#
+# The corpus is "mixed science" (DNA repair, carcinogenesis, physics/biology,
+# somatic mutation) so we use the general-purpose SFR-Embedding-Mistral
+# encoder rather than a domain-specific BERT (e.g. PubMedBERT), matching the
+# HiPerRAG (arXiv:2505.04846) semantic-chunking approach.
+
+dataset:
+  name: jsonl_chunk
+  # Output of pdfwf, one JSONL file per shard:
+  #   {"path": "<source pdf path>", "text": "<full extracted text>", "metadata": {...}}
+  data_dir: /lus/flare/projects/<PROJECT>/radiation_biology/pdfwf_output
+  # Glob pattern for the JSONL shards produced by pdfwf
+  glob_pattern: "*.jsonl"
+  chunker:
+    chunker: semantic
+    chunker_kwargs:
+      # Cosine-similarity sentence grouping (HiPerRAG-style semantic chunking)
+      breakpoint_percentile_threshold: 95
+      buffer_size: 1
+      min_chunk_length: 64
+      chunk_batch_size: 64
+
+encoder:
+  name: auto
+  pretrained_model_name_or_path: Salesforce/SFR-Embedding-Mistral
+  tokenizer_name: Salesforce/SFR-Embedding-Mistral
+  half_precision: true
+  eval_mode: true
+  compile_model: false
+
+pooler:
+  name: last_token
+
+embedder:
+  name: semantic_chunk
+  batch_size: 4
+  pooler_batch_size: 4
+  normalize_embeddings: true
+
+writer:
+  name: huggingface
+  # One Arrow shard per worker; consumed by
+  # nano_graphrag._distllm_bridge.load_distllm_dataset()
+  output_path: /lus/flare/projects/<PROJECT>/radiation_biology/embeddings/sfr_mistral
+
+compute_config:
+  name: aurora
+  # Aurora node: 2x Intel Xeon CPU Max + 6x Intel Data Center GPU Max 1550
+  # (12 tiles total, each tile addressable as one accelerator via
+  # ZE_AFFINITY_MASK). Pilot run: 2 nodes is plenty for ~600 papers
+  # (4 LDR sub-domains x ~150 papers).
+  num_nodes: 2
+  worker_init: |
+    module load frameworks
+    module load oneapi/release
+    source activate distllm
+    export ZE_FLAT_DEVICE_HIERARCHY=FLAT
+    export CCL_ZE_IPC_EXCHANGE=drmfd
+  scheduler_options: "#PBS -l filesystems=home:flare"
+  account: <INCITE_PROJECT_ID>
+  queue: prod
+  walltime: 02:00:00
+  # 6 GPUs x 2 tiles = 12 accelerators per node
+  available_accelerators: 12
+  cpus_per_node: 96
+  retries: 1
