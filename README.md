@@ -48,6 +48,47 @@ with [Graph Building](docs/GRAPH_BUILDING.md).
 
 ![QA system flow](docs/assets/agentic_system_flow.svg)
 
+## Ingestion pipeline
+
+![distllm to Neo4j ingestion flow](docs/assets/distllm_ingestion_flow.svg)
+
+The QA system map above is the runtime; this is the offline pipeline that
+builds the graph it queries. PDFs are parsed by
+[pdfwf](https://github.com/ramanathanlab/pdfwf) into JSONL, semantically
+chunked and embedded by [distllm](https://github.com/ramanathanlab/distllm)
+(SFR-Embedding-Mistral), and converted by
+[`nano_graphrag/_distllm_bridge.py`](nano_graphrag/_distllm_bridge.py) into
+nano-graphrag's `TextChunkSchema` plus precomputed embeddings — skipping
+nano-graphrag's own chunker. From there, normal entity/relationship
+extraction and Leiden clustering produce entity-level nodes and
+concept-cluster communities; `align_communities_to_ontology` then matches
+those communities against domain ontology schemas (e.g.
+`low-dose-radiation-cancer/*/graph_metadata.json`), giving the graph both
+entity-level and concept/ontology-level granularity.
+
+- Aurora distllm config: [configs/aurora_sfr_mistral_radiation_biology.yaml](configs/aurora_sfr_mistral_radiation_biology.yaml)
+- End-to-end example: [examples/radiation_biology_neo4j_pipeline.py](examples/radiation_biology_neo4j_pipeline.py)
+
+## Encoders and storage integrations
+
+### Embedding encoders (`embedding_func`)
+
+| Encoder | Source | Notes |
+| --- | --- | --- |
+| OpenAI / Azure OpenAI `text-embedding-3-small` | [`nano_graphrag/_llm.py`](nano_graphrag/_llm.py) | default |
+| Amazon Bedrock Titan embeddings | [`nano_graphrag/_llm.py`](nano_graphrag/_llm.py) | via `using_amazon_bedrock=True` |
+| Local sentence-transformers / Ollama | [examples/using_local_embedding_model.py](examples/using_local_embedding_model.py), [examples/using_ollama_as_llm_and_embedding.py](examples/using_ollama_as_llm_and_embedding.py) | runs fully offline |
+| SFR-Embedding-Mistral via distllm | [`nano_graphrag/_distllm_bridge.py`](nano_graphrag/_distllm_bridge.py) | precomputed semantic-chunk embeddings from distllm, with live SFR-Mistral fallback for text distllm never saw (queries, LLM-written summaries) |
+
+### Storage backends (`graph_storage_cls`, `vector_db_storage_cls`)
+
+| Backend | Module | Notes |
+| --- | --- | --- |
+| NetworkX (default graph store) | [`nano_graphrag/_storage/gdb_networkx.py`](nano_graphrag/_storage/gdb_networkx.py) | local GraphML file, no external services |
+| Neo4j + GDS (Leiden clustering) | [`nano_graphrag/_storage/gdb_neo4j.py`](nano_graphrag/_storage/gdb_neo4j.py) | required for the distllm ingestion pipeline above; see [docs/use_neo4j_for_graphrag.md](docs/use_neo4j_for_graphrag.md) |
+| NanoVectorDB / HNSWLib (vector stores) | [`nano_graphrag/_storage/vdb_nanovectordb.py`](nano_graphrag/_storage/vdb_nanovectordb.py), [`nano_graphrag/_storage/vdb_hnswlib.py`](nano_graphrag/_storage/vdb_hnswlib.py) | entity/chunk vector indexes |
+| JSON KV store | [`nano_graphrag/_storage/kv_json.py`](nano_graphrag/_storage/kv_json.py) | docs, chunks, community reports, LLM cache |
+
 ## Runtime architecture
 
 ### Main components
